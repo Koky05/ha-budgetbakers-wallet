@@ -1,0 +1,56 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BudgetBakers Wallet",
+        "description": "Enter your Wallet API token.\nGet it from [BudgetBakers Settings](https://web.budgetbakers.com/settings/apiTokens).",
+        "data": {
+          "api_token": "API Token"
+        }
+      },
+      "accounts": {
+        "title": "Select Accounts",
+        "description": "Choose which accounts you want to monitor.",
+        "data": {
+          "monitored_accounts": "Monitored accounts"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "Your API token has expired or is invalid. Please enter a new one.",
+        "data": {
+          "api_token": "API Token"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid API token. Please check your token and try again.",
+      "cannot_connect": "Cannot connect to BudgetBakers API. Please check your internet connection.",
+      "unknown": "An unexpected error occurred. Please try again."
+    },
+    "abort": {
+      "already_configured": "BudgetBakers Wallet is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Wallet Settings",
+        "description": "Configure the update interval for data polling.",
+        "data": {
+          "update_interval": "Update interval (minutes)",
+          "transactions_count": "Recent transactions per account (0-100)",
+          "investment_entity": "Investment balance entity (e.g., sensor.dt_akcie_aktualna_hodnota)"
+        }
+      },
+      "accounts": {
+        "title": "Select Accounts",
+        "description": "Choose which accounts you want to monitor.",
+        "data": {
+          "monitored_accounts": "Monitored accounts"
+        }
+      }
+    }
+  }
+}

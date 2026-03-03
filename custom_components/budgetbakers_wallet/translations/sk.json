@@ -1,0 +1,56 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BudgetBakers Wallet",
+        "description": "Zadajte v\u00e1\u0161 API token pre Wallet.\nZ\u00edskajte ho v [nastaveniach BudgetBakers](https://web.budgetbakers.com/settings/apiTokens).",
+        "data": {
+          "api_token": "API Token"
+        }
+      },
+      "accounts": {
+        "title": "V\u00fdber \u00fa\u010dtov",
+        "description": "Vyberte, ktor\u00e9 \u00fa\u010dty chcete sledova\u0165.",
+        "data": {
+          "monitored_accounts": "Sledovan\u00e9 \u00fa\u010dty"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Opakovan\u00e9 overenie",
+        "description": "V\u00e1\u0161 API token vypr\u0161al alebo je neplatn\u00fd. Zadajte nov\u00fd.",
+        "data": {
+          "api_token": "API Token"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Neplatn\u00fd API token. Skontrolujte token a sk\u00faste znova.",
+      "cannot_connect": "Nie je mo\u017en\u00e9 sa pripoji\u0165 k BudgetBakers API. Skontrolujte pripojenie na internet.",
+      "unknown": "Vyskytla sa neo\u010dak\u00e1van\u00e1 chyba. Sk\u00faste znova."
+    },
+    "abort": {
+      "already_configured": "BudgetBakers Wallet je u\u017e nakonfigurovan\u00fd.",
+      "reauth_successful": "Opakovan\u00e9 overenie bolo \u00faspe\u0161n\u00e9."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Nastavenia Wallet",
+        "description": "Nastavte interval aktualiz\u00e1cie d\u00e1t.",
+        "data": {
+          "update_interval": "Interval aktualiz\u00e1cie (min\u00faty)",
+          "transactions_count": "Po\u010det posledn\u00fdch transakci\u00ed na \u00fa\u010det (0-100)",
+          "investment_entity": "Entita pre hodnotu invest\u00edci\u00ed (napr. sensor.dt_akcie_aktualna_hodnota)"
+        }
+      },
+      "accounts": {
+        "title": "V\u00fdber \u00fa\u010dtov",
+        "description": "Vyberte, ktor\u00e9 \u00fa\u010dty chcete sledova\u0165.",
+        "data": {
+          "monitored_accounts": "Sledovan\u00e9 \u00fa\u010dty"
+        }
+      }
+    }
+  }
+}
