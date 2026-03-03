@@ -23,12 +23,29 @@ from .const import API_MAX_DATE_RANGE_DAYS, DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
+def _safe_float(value: Any) -> float:
+    """Safely convert a value to float, returning 0.0 on failure."""
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _get_record_value(record: dict[str, Any]) -> float:
+    """Extract the numeric amount from a record safely."""
+    amount_data = record.get("amount") or record.get("baseAmount")
+    if not amount_data:
+        return 0.0
+    return _safe_float(amount_data.get("value", 0))
+
+
 @dataclass
 class WalletData:
     """Data class holding all fetched Wallet data."""
 
     accounts: list[dict[str, Any]] = field(default_factory=list)
     records_current_month: list[dict[str, Any]] = field(default_factory=list)
+    records_by_account: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     categories: list[dict[str, Any]] = field(default_factory=list)
     budgets: list[dict[str, Any]] = field(default_factory=list)
     standing_orders: list[dict[str, Any]] = field(default_factory=list)
@@ -59,20 +76,27 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
         self._history_month: str = ""
         self._history_loaded: bool = False
 
-    async def _fetch_all_records_in_range(
-        self, start: datetime, end: datetime
-    ) -> list[dict[str, Any]]:
-        """Fetch all records in a date range, splitting into safe windows."""
-        all_records: list[dict[str, Any]] = []
-        window_start = start
+    async def _aggregate_history_streaming(
+        self,
+        accounts: list[dict[str, Any]],
+        earliest: datetime,
+        month_start: datetime,
+    ) -> None:
+        """Fetch historical records and aggregate sums per-window (low memory)."""
+        self._historical_balances = {
+            acc.get("id", ""): 0.0 for acc in accounts if acc.get("id")
+        }
 
-        while window_start < end:
+        window_start = earliest
+        total_records = 0
+
+        while window_start < month_start:
             window_end = min(
                 window_start + timedelta(days=API_MAX_DATE_RANGE_DAYS),
-                end,
+                month_start,
             )
             _LOGGER.debug(
-                "Fetching records from %s to %s",
+                "Fetching history window %s to %s",
                 window_start.isoformat(),
                 window_end.isoformat(),
             )
@@ -80,10 +104,19 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                 record_date_gte=window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 record_date_lt=window_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
-            all_records.extend(records)
+            for record in records:
+                acc_id = record.get("accountId")
+                if acc_id in self._historical_balances:
+                    self._historical_balances[acc_id] += _get_record_value(record)
+            total_records += len(records)
+            # records list freed at end of each iteration
             window_start = window_end
 
-        return all_records
+        _LOGGER.info(
+            "History loaded: %d records across %d accounts",
+            total_records,
+            len(self._historical_balances),
+        )
 
     async def _async_update_data(self) -> WalletData:
         """Fetch data from the Wallet API."""
@@ -104,7 +137,9 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
             else:
                 categories = self.data.categories
 
-            categories_map = {c["id"]: c for c in categories if "id" in c}
+            categories_map = {
+                c["id"]: c for c in categories if c.get("id")
+            }
 
             # Current month boundaries
             month_start = now.replace(
@@ -125,10 +160,15 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                 record_date_lt=month_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
 
-            # Detect new accounts that need history fetch
-            current_acc_ids = {acc["id"] for acc in accounts}
+            # Detect account changes
+            current_acc_ids = {acc.get("id") for acc in accounts if acc.get("id")}
             cached_acc_ids = set(self._historical_balances.keys())
             new_accounts = current_acc_ids - cached_acc_ids
+            removed_accounts = cached_acc_ids - current_acc_ids
+
+            # Prune removed accounts from cache
+            for removed_id in removed_accounts:
+                self._historical_balances.pop(removed_id, None)
 
             # Fetch full history on first load, month change, or new accounts
             if (
@@ -136,9 +176,7 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                 or self._history_month != current_month_key
                 or new_accounts
             ):
-                _LOGGER.info(
-                    "Loading full transaction history for balance computation"
-                )
+                _LOGGER.info("Loading transaction history for balance computation")
                 # Find earliest record date across all accounts
                 earliest = None
                 for acc in accounts:
@@ -158,55 +196,38 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                 if earliest is None:
                     earliest = month_start - timedelta(days=365)
 
-                # Fetch all records from earliest to start of current month
-                historical_records: list[dict[str, Any]] = []
+                # Stream-aggregate: process per-window, never hold full history
                 if earliest < month_start:
-                    historical_records = await self._fetch_all_records_in_range(
-                        earliest, month_start
+                    await self._aggregate_history_streaming(
+                        accounts, earliest, month_start
                     )
-
-                # Cache the historical per-account sums
-                self._historical_balances = {}
-                for acc in accounts:
-                    self._historical_balances[acc["id"]] = 0.0
-
-                for record in historical_records:
-                    acc_id = record.get("accountId")
-                    if acc_id not in self._historical_balances:
-                        continue
-                    amount_data = record.get("amount") or record.get("baseAmount")
-                    if amount_data:
-                        self._historical_balances[acc_id] += amount_data.get("value", 0.0)
 
                 self._history_month = current_month_key
                 self._history_loaded = True
-                _LOGGER.info(
-                    "History loaded: %d historical records across %d accounts",
-                    len(historical_records),
-                    len(self._historical_balances),
-                )
 
-            # Pre-aggregate current month sums by account (O(n) instead of O(n*m))
+            # Pre-index current month records by account (O(n) instead of O(n*m))
+            records_by_account: dict[str, list[dict[str, Any]]] = {}
             current_sums: dict[str, float] = {}
             for record in current_month_records:
                 acc_id = record.get("accountId")
                 if not acc_id:
                     continue
-                amount_data = record.get("amount") or record.get("baseAmount")
-                if amount_data:
-                    current_sums[acc_id] = (
-                        current_sums.get(acc_id, 0.0) + amount_data.get("value", 0.0)
-                    )
+                records_by_account.setdefault(acc_id, []).append(record)
+                current_sums[acc_id] = (
+                    current_sums.get(acc_id, 0.0) + _get_record_value(record)
+                )
 
             # Compute final balances: initialBalance*100 + historical + currentMonth
             account_balances: dict[str, float] = {}
             for acc in accounts:
-                acc_id = acc["id"]
+                acc_id = acc.get("id")
+                if not acc_id:
+                    continue
                 balance_data = acc.get("initialBalance")
                 if balance_data is None:
                     balance_data = acc.get("initialBaseBalance")
                 # API returns initialBalance divided by 100
-                initial = (balance_data.get("value", 0.0) * 100) if balance_data else 0.0
+                initial = (_safe_float(balance_data.get("value", 0)) * 100) if balance_data else 0.0
                 historical = self._historical_balances.get(acc_id, 0.0)
                 current = current_sums.get(acc_id, 0.0)
 
@@ -221,6 +242,7 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
             return WalletData(
                 accounts=accounts,
                 records_current_month=current_month_records,
+                records_by_account=records_by_account,
                 categories=categories,
                 budgets=budgets,
                 standing_orders=standing_orders,
@@ -237,7 +259,7 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
             _LOGGER.debug("Wallet sync detail: %s", err)
             raise UpdateFailed("Wallet sync in progress") from None
         except WalletRateLimitError as err:
-            _LOGGER.debug("Rate limit detail: %s", err)
+            _LOGGER.warning("API rate limit exceeded: %s", err)
             raise UpdateFailed("API rate limit exceeded") from None
         except WalletApiError as err:
             _LOGGER.debug("API error detail: %s", err)

@@ -268,11 +268,9 @@ class WalletAccountBalanceSensor(CoordinatorEntity[WalletCoordinator], SensorEnt
             attrs[ATTR_RECORD_COUNT] = stats.get("recordCount", 0)
 
         if self._transactions_count > 0 and self.coordinator.data:
-            account_records = [
-                r
-                for r in self.coordinator.data.records_current_month
-                if r.get("accountId") == self._account_id
-            ]
+            account_records = self.coordinator.data.records_by_account.get(
+                self._account_id, []
+            )
             sorted_records = sorted(
                 account_records,
                 key=lambda r: r.get("recordDate", ""),

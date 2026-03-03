@@ -76,7 +76,10 @@ class WalletApiClient:
                 self._track_rate_limit(resp)
 
                 if resp.status == 200:
-                    return await resp.json()
+                    try:
+                        return await resp.json(content_type=None)
+                    except (ValueError, aiohttp.ContentTypeError) as err:
+                        raise WalletApiError(f"Invalid JSON response") from err
                 if resp.status == 401:
                     raise WalletAuthError(
                         f"Authentication failed (HTTP {resp.status})"
@@ -188,7 +191,10 @@ class WalletApiClient:
                 self._track_rate_limit(resp)
 
                 if resp.status == 200:
-                    data = await resp.json()
+                    try:
+                        data = await resp.json(content_type=None)
+                    except (ValueError, aiohttp.ContentTypeError) as err:
+                        raise WalletApiError("Invalid JSON response") from err
                     records = data.get("records", [])
                     all_records.extend(records)
                     next_offset = data.get("nextOffset")
