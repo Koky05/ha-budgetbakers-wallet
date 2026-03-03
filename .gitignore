@@ -25,6 +25,7 @@ venv/
 
 # Local working directories
 .*/
+!.github/
 data/
 brands_pr/
 WALLET_API.md
