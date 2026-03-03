@@ -9,7 +9,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import WalletApiClient
-from .const import CONF_API_TOKEN, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, PLATFORMS
+from .const import (
+    CONF_API_TOKEN,
+    CONF_INVESTMENT_ENTITIES,
+    CONF_UPDATE_INTERVAL,
+    DEFAULT_UPDATE_INTERVAL,
+    PLATFORMS,
+)
 from .coordinator import WalletCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,6 +25,14 @@ WalletConfigEntry = ConfigEntry[WalletCoordinator]
 
 async def async_setup_entry(hass: HomeAssistant, entry: WalletConfigEntry) -> bool:
     """Set up BudgetBakers Wallet from a config entry."""
+    # Migrate old investment_entity (string) to investment_entities (dict)
+    investment_data = entry.options.get(CONF_INVESTMENT_ENTITIES)
+    if isinstance(investment_data, str):
+        _LOGGER.info("Migrating investment_entity from string to dict format")
+        new_options = dict(entry.options)
+        new_options[CONF_INVESTMENT_ENTITIES] = {}
+        hass.config_entries.async_update_entry(entry, options=new_options)
+
     token = entry.data[CONF_API_TOKEN]
     update_interval = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
 

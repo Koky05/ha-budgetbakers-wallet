@@ -15,6 +15,19 @@
           "monitored_accounts": "Monitored accounts"
         }
       },
+      "investments": {
+        "title": "Investment Accounts",
+        "description": "Link investment accounts to HA sensors for live market values.",
+        "data": {}
+      },
+      "settings": {
+        "title": "Settings",
+        "description": "Configure polling interval and transaction history.",
+        "data": {
+          "update_interval": "Update interval (minutes)",
+          "transactions_count": "Recent transactions per account (0-100)"
+        }
+      },
       "reauth_confirm": {
         "title": "Re-authenticate",
         "description": "Your API token has expired or is invalid. Please enter a new one.",
@@ -30,18 +43,18 @@
     },
     "abort": {
       "already_configured": "BudgetBakers Wallet is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "no_accounts": "No accounts found in your Wallet."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Wallet Settings",
-        "description": "Configure the update interval for data polling.",
+        "description": "Configure polling interval and transaction history.",
         "data": {
           "update_interval": "Update interval (minutes)",
-          "transactions_count": "Recent transactions per account (0-100)",
-          "investment_entity": "Investment balance entity (e.g., sensor.dt_akcie_aktualna_hodnota)"
+          "transactions_count": "Recent transactions per account (0-100)"
         }
       },
       "accounts": {
@@ -50,6 +63,11 @@
         "data": {
           "monitored_accounts": "Monitored accounts"
         }
+      },
+      "investments": {
+        "title": "Investment Accounts",
+        "description": "Link investment accounts to HA sensors for live market values.",
+        "data": {}
       }
     }
   }

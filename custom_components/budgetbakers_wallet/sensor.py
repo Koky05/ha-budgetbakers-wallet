@@ -12,9 +12,10 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import WalletConfigEntry
@@ -22,7 +23,7 @@ from .const import (
     ATTR_ACCOUNT_TYPE,
     ATTR_BANK_ACCOUNT_NUMBER,
     ATTR_RECORD_COUNT,
-    CONF_INVESTMENT_ENTITY,
+    CONF_INVESTMENT_ENTITIES,
     CONF_MONITORED_ACCOUNTS,
     CONF_TRANSACTIONS_COUNT,
     DEFAULT_TRANSACTIONS_COUNT,
@@ -144,15 +145,17 @@ async def async_setup_entry(
         entry.options.get(CONF_MONITORED_ACCOUNTS, [])
     )
     tx_count = entry.options.get(CONF_TRANSACTIONS_COUNT, DEFAULT_TRANSACTIONS_COUNT)
-    investment_entity = entry.options.get(CONF_INVESTMENT_ENTITY, "")
+    investment_entities = entry.options.get(CONF_INVESTMENT_ENTITIES, {})
 
     if coordinator.data:
         for account in coordinator.data.accounts:
             if account.get("archived", False):
                 continue
-            if monitored_ids and account["id"] not in monitored_ids:
+            acc_id = account.get("id", "")
+            if monitored_ids and acc_id not in monitored_ids:
                 continue
-            inv_entity = investment_entity if account.get("accountType") == "Investment" else ""
+            # Per-account investment entity lookup
+            inv_entity = investment_entities.get(acc_id, "")
             entities.append(
                 WalletAccountBalanceSensor(coordinator, account, entry_id, tx_count, inv_entity)
             )
@@ -211,6 +214,28 @@ class WalletAccountBalanceSensor(CoordinatorEntity[WalletCoordinator], SensorEnt
         account_type = account.get("accountType", "General")
         self._attr_icon = ACCOUNT_TYPE_ICONS.get(account_type, "mdi:wallet")
         self._is_investment = account_type == "Investment"
+
+    async def async_added_to_hass(self) -> None:
+        """Register state listener for linked investment sensor."""
+        await super().async_added_to_hass()
+        if self._is_investment and self._investment_entity:
+            self._remove_investment_listener = async_track_state_change_event(
+                self.hass,
+                [self._investment_entity],
+                self._on_investment_state_change,
+            )
+            self.async_on_remove(self._remove_investment_listener)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up investment listener on removal."""
+        if hasattr(self, "_remove_investment_listener"):
+            self._remove_investment_listener()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _on_investment_state_change(self, event: Event) -> None:
+        """Update when the linked investment sensor changes."""
+        self.async_write_ha_state()
 
     @property
     def _account(self) -> dict[str, Any] | None:

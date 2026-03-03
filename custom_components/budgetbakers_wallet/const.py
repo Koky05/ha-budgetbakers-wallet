@@ -9,7 +9,7 @@ CONF_API_TOKEN = "api_token"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_MONITORED_ACCOUNTS = "monitored_accounts"
 CONF_TRANSACTIONS_COUNT = "transactions_count"
-CONF_INVESTMENT_ENTITY = "investment_entity"
+CONF_INVESTMENT_ENTITIES = "investment_entities"
 
 DEFAULT_UPDATE_INTERVAL = 30  # minutes
 MIN_UPDATE_INTERVAL = 5

@@ -15,6 +15,19 @@
           "monitored_accounts": "Sledovan\u00e9 \u00fa\u010dty"
         }
       },
+      "investments": {
+        "title": "Investi\u010dn\u00e9 \u00fa\u010dty",
+        "description": "Prepojte investi\u010dn\u00e9 \u00fa\u010dty s HA senzormi pre aktu\u00e1lne trhov\u00e9 hodnoty.",
+        "data": {}
+      },
+      "settings": {
+        "title": "Nastavenia",
+        "description": "Nastavte interval aktualiz\u00e1cie a po\u010det transakci\u00ed.",
+        "data": {
+          "update_interval": "Interval aktualiz\u00e1cie (min\u00faty)",
+          "transactions_count": "Po\u010det posledn\u00fdch transakci\u00ed na \u00fa\u010det (0-100)"
+        }
+      },
       "reauth_confirm": {
         "title": "Opakovan\u00e9 overenie",
         "description": "V\u00e1\u0161 API token vypr\u0161al alebo je neplatn\u00fd. Zadajte nov\u00fd.",
@@ -30,18 +43,18 @@
     },
     "abort": {
       "already_configured": "BudgetBakers Wallet je u\u017e nakonfigurovan\u00fd.",
-      "reauth_successful": "Opakovan\u00e9 overenie bolo \u00faspe\u0161n\u00e9."
+      "reauth_successful": "Opakovan\u00e9 overenie bolo \u00faspe\u0161n\u00e9.",
+      "no_accounts": "\u017diadne \u00fa\u010dty neboli n\u00e1jden\u00e9 vo va\u0161ej Wallet."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Nastavenia Wallet",
-        "description": "Nastavte interval aktualiz\u00e1cie d\u00e1t.",
+        "description": "Nastavte interval aktualiz\u00e1cie a po\u010det transakci\u00ed.",
         "data": {
           "update_interval": "Interval aktualiz\u00e1cie (min\u00faty)",
-          "transactions_count": "Po\u010det posledn\u00fdch transakci\u00ed na \u00fa\u010det (0-100)",
-          "investment_entity": "Entita pre hodnotu invest\u00edci\u00ed (napr. sensor.dt_akcie_aktualna_hodnota)"
+          "transactions_count": "Po\u010det posledn\u00fdch transakci\u00ed na \u00fa\u010det (0-100)"
         }
       },
       "accounts": {
@@ -50,6 +63,11 @@
         "data": {
           "monitored_accounts": "Sledovan\u00e9 \u00fa\u010dty"
         }
+      },
+      "investments": {
+        "title": "Investi\u010dn\u00e9 \u00fa\u010dty",
+        "description": "Prepojte investi\u010dn\u00e9 \u00fa\u010dty s HA senzormi pre aktu\u00e1lne trhov\u00e9 hodnoty.",
+        "data": {}
       }
     }
   }
