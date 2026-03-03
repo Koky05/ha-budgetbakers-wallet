@@ -62,6 +62,9 @@ class WalletData:
     last_full_update: datetime | None = None
     categories_map: dict[str, dict[str, Any]] = field(default_factory=dict)
     account_balances: dict[str, float] = field(default_factory=dict)
+    account_map: dict[str, dict[str, Any]] = field(default_factory=dict)
+    budget_map: dict[str, dict[str, Any]] = field(default_factory=dict)
+    standing_order_map: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 # --- Checkpoint persistence ---
@@ -345,6 +348,17 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
             budgets = await self.client.async_get_budgets()
             standing_orders = await self.client.async_get_standing_orders()
 
+            # --- Build lookup maps for O(1) access in sensors ---
+            account_map = {
+                acc["id"]: acc for acc in accounts if acc.get("id")
+            }
+            budget_map = {
+                b["id"]: b for b in budgets if b.get("id")
+            }
+            standing_order_map = {
+                o["id"]: o for o in standing_orders if o.get("id")
+            }
+
             return WalletData(
                 accounts=accounts,
                 records_current_month=current_month_records,
@@ -354,6 +368,9 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                 standing_orders=standing_orders,
                 categories_map=categories_map,
                 account_balances=account_balances,
+                account_map=account_map,
+                budget_map=budget_map,
+                standing_order_map=standing_order_map,
                 last_full_update=now,
             )
 

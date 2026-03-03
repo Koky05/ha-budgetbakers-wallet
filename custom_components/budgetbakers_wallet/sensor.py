@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import heapq
 import html
 import logging
 from typing import Any
@@ -29,7 +28,7 @@ from .const import (
     DEFAULT_TRANSACTIONS_COUNT,
     DOMAIN,
 )
-from .coordinator import WalletCoordinator, WalletData
+from .coordinator import WalletCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,6 +45,9 @@ ACCOUNT_TYPE_ICONS = {
     "Bonus": "mdi:gift",
     "Overdraft": "mdi:bank-minus",
 }
+
+MAX_RRULE_LENGTH = 500
+MAX_RRULE_PARTS = 20
 
 
 def _mask_bank_number(bank_num: str) -> str:
@@ -148,32 +150,43 @@ async def async_setup_entry(
     investment_entities = entry.options.get(CONF_INVESTMENT_ENTITIES, {})
 
     if coordinator.data:
+        # Pre-index accounts by ID for O(1) lookup
+        account_map = {
+            acc["id"]: acc
+            for acc in coordinator.data.accounts
+            if acc.get("id")
+        }
+
+        # Account balance sensors
         for account in coordinator.data.accounts:
             if account.get("archived", False):
                 continue
             acc_id = account.get("id", "")
             if monitored_ids and acc_id not in monitored_ids:
                 continue
-            # Per-account investment entity lookup
             inv_entity = investment_entities.get(acc_id, "")
             entities.append(
-                WalletAccountBalanceSensor(coordinator, account, entry_id, tx_count, inv_entity)
+                WalletAccountBalanceSensor(
+                    coordinator, account, entry_id, tx_count, inv_entity
+                )
             )
 
+        # Global sensors (under main Wallet device)
         entities.append(WalletMonthlySpendingSensor(coordinator, entry_id))
         entities.append(WalletRecentTransactionsSensor(coordinator, entry_id))
 
+        # Budget progress sensors
         for budget in coordinator.data.budgets:
-            entities.append(WalletBudgetProgressSensor(coordinator, budget, entry_id))
+            entities.append(
+                WalletBudgetProgressSensor(coordinator, budget, entry_id)
+            )
 
+        # Standing order sensors (under their account device)
         for order in coordinator.data.standing_orders:
             order_acc_id = order.get("accountId")
             if monitored_ids and order_acc_id and order_acc_id not in monitored_ids:
                 continue
-            account = next(
-                (a for a in coordinator.data.accounts if a["id"] == order_acc_id),
-                None,
-            )
+            account = account_map.get(order_acc_id)
             entities.append(
                 WalletStandingOrderSensor(coordinator, order, entry_id, account)
             )
@@ -219,18 +232,13 @@ class WalletAccountBalanceSensor(CoordinatorEntity[WalletCoordinator], SensorEnt
         """Register state listener for linked investment sensor."""
         await super().async_added_to_hass()
         if self._is_investment and self._investment_entity:
-            self._remove_investment_listener = async_track_state_change_event(
-                self.hass,
-                [self._investment_entity],
-                self._on_investment_state_change,
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass,
+                    [self._investment_entity],
+                    self._on_investment_state_change,
+                )
             )
-            self.async_on_remove(self._remove_investment_listener)
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Clean up investment listener on removal."""
-        if hasattr(self, "_remove_investment_listener"):
-            self._remove_investment_listener()
-        await super().async_will_remove_from_hass()
 
     @callback
     def _on_investment_state_change(self, event: Event) -> None:
@@ -239,13 +247,10 @@ class WalletAccountBalanceSensor(CoordinatorEntity[WalletCoordinator], SensorEnt
 
     @property
     def _account(self) -> dict[str, Any] | None:
-        """Find current account in coordinator data."""
+        """Find current account in coordinator data (O(1) via pre-indexed map)."""
         if not self.coordinator.data:
             return None
-        for acc in self.coordinator.data.accounts:
-            if acc["id"] == self._account_id:
-                return acc
-        return None
+        return self.coordinator.data.account_map.get(self._account_id)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -293,17 +298,13 @@ class WalletAccountBalanceSensor(CoordinatorEntity[WalletCoordinator], SensorEnt
         if stats:
             attrs[ATTR_RECORD_COUNT] = stats.get("recordCount", 0)
 
+        # Per-account recent transactions (API returns newest first)
         if self._transactions_count > 0 and self.coordinator.data:
             account_records = self.coordinator.data.records_by_account.get(
                 self._account_id, []
             )
-            sorted_records = heapq.nlargest(
-                self._transactions_count,
-                account_records,
-                key=lambda r: r.get("recordDate", ""),
-            )
-
-            attrs["transactions"] = [_format_transaction(r) for r in sorted_records]
+            recent = account_records[: self._transactions_count]
+            attrs["transactions"] = [_format_transaction(r) for r in recent]
             attrs["transactions_this_month"] = len(account_records)
 
         return attrs
@@ -409,13 +410,9 @@ class WalletRecentTransactionsSensor(CoordinatorEntity[WalletCoordinator], Senso
         if not self.coordinator.data:
             return {}
 
-        sorted_records = heapq.nlargest(
-            10,
-            self.coordinator.data.records_current_month,
-            key=lambda r: r.get("recordDate", ""),
-        )
-
-        return {"transactions": [_format_transaction(r) for r in sorted_records]}
+        # API returns records sorted by -recordDate (newest first)
+        recent = self.coordinator.data.records_current_month[:10]
+        return {"transactions": [_format_transaction(r) for r in recent]}
 
 
 class WalletBudgetProgressSensor(CoordinatorEntity[WalletCoordinator], SensorEntity):
@@ -442,13 +439,10 @@ class WalletBudgetProgressSensor(CoordinatorEntity[WalletCoordinator], SensorEnt
 
     @property
     def _budget(self) -> dict[str, Any] | None:
-        """Find current budget in coordinator data."""
+        """Find current budget in coordinator data (O(1) via pre-indexed map)."""
         if not self.coordinator.data:
             return None
-        for b in self.coordinator.data.budgets:
-            if b["id"] == self._budget_id:
-                return b
-        return None
+        return self.coordinator.data.budget_map.get(self._budget_id)
 
     @property
     def native_value(self) -> float | None:
@@ -525,8 +519,13 @@ def _parse_rrule(rrule: str) -> str:
     """Convert RRULE string to human-readable frequency."""
     if not rrule:
         return "unknown"
+    if len(rrule) > MAX_RRULE_LENGTH:
+        return rrule[:50]
+
     parts = {}
-    for part in rrule.split(";"):
+    for idx, part in enumerate(rrule.split(";")):
+        if idx >= MAX_RRULE_PARTS:
+            break
         if "=" in part:
             key, val = part.split("=", 1)
             parts[key] = val
@@ -588,13 +587,10 @@ class WalletStandingOrderSensor(CoordinatorEntity[WalletCoordinator], SensorEnti
 
     @property
     def _order(self) -> dict[str, Any] | None:
-        """Find current standing order in coordinator data."""
+        """Find current standing order in coordinator data (O(1) via pre-indexed map)."""
         if not self.coordinator.data:
             return None
-        for o in self.coordinator.data.standing_orders:
-            if o["id"] == self._order_id:
-                return o
-        return None
+        return self.coordinator.data.standing_order_map.get(self._order_id)
 
     @property
     def native_value(self) -> float | None:

@@ -45,6 +45,38 @@ TOKEN_SCHEMA = vol.Schema(
 )
 
 
+def _build_investment_label(acc: dict[str, Any], index: int) -> str:
+    """Build a unique label for an investment account field."""
+    name = acc.get("name", "Investment")
+    acc_type = acc.get("accountType", "")
+    bank_num = acc.get("bankAccountNumber", "")
+    # Ensure uniqueness by appending index if needed
+    suffix = f" ({bank_num})" if bank_num else f" #{index + 1}"
+    return f"{name}{suffix}"
+
+
+def _validate_investment_entity(
+    hass: Any, entity_id: str
+) -> bool:
+    """Validate that an investment entity exists and has numeric state."""
+    if not entity_id:
+        return False
+    state = hass.states.get(entity_id)
+    if state and state.state not in ("unknown", "unavailable"):
+        try:
+            float(state.state)
+            return True
+        except (ValueError, TypeError):
+            _LOGGER.warning(
+                "Investment entity %s has non-numeric state '%s', skipping",
+                entity_id,
+                state.state,
+            )
+            return False
+    # Entity might not be ready yet — accept it
+    return True
+
+
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for BudgetBakers Wallet."""
 
@@ -114,7 +146,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._selected_accounts = user_input.get(CONF_MONITORED_ACCOUNTS, [])
 
-            # Check if any Investment accounts are selected
             investment_accounts = self._get_investment_accounts(
                 self._selected_accounts
             )
@@ -167,40 +198,27 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._selected_accounts
         )
 
-        # Build name→id mapping for investment accounts
-        name_to_id = {
-            acc.get("name", acc["id"]): acc["id"]
-            for acc in investment_accounts
-        }
+        # Build unique label→id mapping (handles name collisions)
+        label_to_id: dict[str, str] = {}
+        for idx, acc in enumerate(investment_accounts):
+            label = _build_investment_label(acc, idx)
+            label_to_id[label] = acc["id"]
 
         if user_input is not None:
-            # Collect and validate per-account entity mappings
             investment_entities: dict[str, str] = {}
-            for acc_name, acc_id in name_to_id.items():
-                entity = user_input.get(acc_name, "")
-                if entity:
-                    state = self.hass.states.get(entity)
-                    if state and state.state not in ("unknown", "unavailable"):
-                        try:
-                            float(state.state)
-                            investment_entities[acc_id] = entity
-                        except (ValueError, TypeError):
-                            _LOGGER.warning(
-                                "Investment entity %s has non-numeric state, skipping",
-                                entity,
-                            )
-                    else:
-                        # Entity might not be ready yet, accept it
-                        investment_entities[acc_id] = entity
+            for label, acc_id in label_to_id.items():
+                entity = user_input.get(label, "")
+                if entity and _validate_investment_entity(self.hass, entity):
+                    investment_entities[acc_id] = entity
 
             self._investment_entities = investment_entities
             return await self.async_step_settings()
 
-        # Build schema — use account name as field label
+        # Build schema — use descriptive label as field key
         schema_fields: dict[Any, Any] = {}
-        for acc_name in name_to_id:
+        for label in label_to_id:
             schema_fields[
-                vol.Optional(acc_name, default="")
+                vol.Optional(label, default="")
             ] = EntitySelector(EntitySelectorConfig(domain="sensor"))
 
         return self.async_show_form(
@@ -452,31 +470,31 @@ class WalletOptionsFlowHandler(config_entries.OptionsFlow):
             and a.get("accountType") == "Investment"
         ]
 
-        # Build name→id mapping
-        name_to_id = {
-            acc.get("name", acc["id"]): acc["id"]
-            for acc in investment_accounts
-        }
+        # Build unique label→id mapping
+        label_to_id: dict[str, str] = {}
+        for idx, acc in enumerate(investment_accounts):
+            label = _build_investment_label(acc, idx)
+            label_to_id[label] = acc["id"]
 
         if user_input is not None:
             investment_entities: dict[str, str] = {}
-            for acc_name, acc_id in name_to_id.items():
-                entity = user_input.get(acc_name, "")
-                if entity:
+            for label, acc_id in label_to_id.items():
+                entity = user_input.get(label, "")
+                if entity and _validate_investment_entity(self.hass, entity):
                     investment_entities[acc_id] = entity
 
             return self._create_options_entry(investment_entities)
 
-        # Build schema — use account name as field label
+        # Build schema with current values
         current_entities = self.config_entry.options.get(
             CONF_INVESTMENT_ENTITIES, {}
         )
 
         schema_fields: dict[Any, Any] = {}
-        for acc_name, acc_id in name_to_id.items():
+        for label, acc_id in label_to_id.items():
             current = current_entities.get(acc_id, "")
             schema_fields[
-                vol.Optional(acc_name, default=current)
+                vol.Optional(label, default=current)
             ] = EntitySelector(EntitySelectorConfig(domain="sensor"))
 
         return self.async_show_form(
