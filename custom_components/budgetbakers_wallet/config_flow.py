@@ -135,6 +135,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=TOKEN_SCHEMA,
             errors=errors,
+            description_placeholders={
+                "token_url": "https://web.budgetbakers.com/settings/apiTokens"
+            },
         )
 
     # --- Step 2: Account selection ---
@@ -310,6 +313,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=TOKEN_SCHEMA,
             errors=errors,
+            description_placeholders={
+                "token_url": "https://web.budgetbakers.com/settings/apiTokens"
+            },
         )
 
     # --- Options flow ---

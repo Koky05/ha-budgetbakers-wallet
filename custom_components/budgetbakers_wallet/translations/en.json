@@ -4,9 +4,6 @@
       "user": {
         "title": "BudgetBakers Wallet",
         "description": "Enter your Wallet API token.\nGet it from [BudgetBakers Settings]({token_url}).",
-        "description_placeholders": {
-          "token_url": "https://web.budgetbakers.com/settings/apiTokens"
-        },
         "data": {
           "api_token": "API Token"
         }

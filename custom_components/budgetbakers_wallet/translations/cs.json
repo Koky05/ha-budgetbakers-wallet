@@ -4,9 +4,6 @@
       "user": {
         "title": "BudgetBakers Wallet",
         "description": "Zadejte v\u00e1\u0161 API token pro Wallet.\nZ\u00edskejte ho v [nastaven\u00ed BudgetBakers]({token_url}).",
-        "description_placeholders": {
-          "token_url": "https://web.budgetbakers.com/settings/apiTokens"
-        },
         "data": {
           "api_token": "API Token"
         }
