@@ -3,7 +3,10 @@
     "step": {
       "user": {
         "title": "BudgetBakers Wallet",
-        "description": "Zadajte v\u00e1\u0161 API token pre Wallet.\nZ\u00edskajte ho v [nastaveniach BudgetBakers](https://web.budgetbakers.com/settings/apiTokens).",
+        "description": "Zadajte v\u00e1\u0161 API token pre Wallet.\nZ\u00edskajte ho v [nastaveniach BudgetBakers]({token_url}).",
+        "description_placeholders": {
+          "token_url": "https://web.budgetbakers.com/settings/apiTokens"
+        },
         "data": {
           "api_token": "API Token"
         }
