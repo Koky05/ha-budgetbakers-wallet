@@ -14,7 +14,7 @@ from .coordinator import WalletCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-type WalletConfigEntry = ConfigEntry[WalletCoordinator]
+WalletConfigEntry = ConfigEntry[WalletCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: WalletConfigEntry) -> bool:

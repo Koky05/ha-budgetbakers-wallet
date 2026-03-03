@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -21,6 +23,11 @@ from .api import (
 from .const import API_MAX_DATE_RANGE_DAYS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+CHECKPOINT_FILENAME = "budgetbakers_wallet_checkpoint.json"
+
+
+# --- Utility functions ---
 
 
 def _safe_float(value: Any) -> float:
@@ -39,6 +46,9 @@ def _get_record_value(record: dict[str, Any]) -> float:
     return _safe_float(amount_data.get("value", 0))
 
 
+# --- Data model ---
+
+
 @dataclass
 class WalletData:
     """Data class holding all fetched Wallet data."""
@@ -52,6 +62,63 @@ class WalletData:
     last_full_update: datetime | None = None
     categories_map: dict[str, dict[str, Any]] = field(default_factory=dict)
     account_balances: dict[str, float] = field(default_factory=dict)
+
+
+# --- Checkpoint persistence ---
+
+
+class BalanceCheckpoint:
+    """Persistent storage for historical balance sums."""
+
+    def __init__(self, storage_path: Path) -> None:
+        self._path = storage_path / CHECKPOINT_FILENAME
+
+    def load(self) -> tuple[dict[str, float], str]:
+        """Load checkpoint from disk. Returns (balances, month_key)."""
+        if not self._path.exists():
+            return {}, ""
+        try:
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+            balances = {
+                k: _safe_float(v)
+                for k, v in data.get("balances", {}).items()
+            }
+            month = data.get("month", "")
+            _LOGGER.debug(
+                "Loaded balance checkpoint: %d accounts, month=%s",
+                len(balances), month,
+            )
+            return balances, month
+        except (json.JSONDecodeError, OSError) as err:
+            _LOGGER.warning("Failed to load balance checkpoint: %s", err)
+            return {}, ""
+
+    def save(self, balances: dict[str, float], month_key: str) -> None:
+        """Save checkpoint to disk. Only stores account IDs and sums."""
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "month": month_key,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "balances": {k: round(v, 4) for k, v in balances.items()},
+            }
+            self._path.write_text(
+                json.dumps(data, indent=2),
+                encoding="utf-8",
+            )
+            _LOGGER.debug("Saved balance checkpoint: %d accounts", len(balances))
+        except OSError as err:
+            _LOGGER.warning("Failed to save balance checkpoint: %s", err)
+
+    def delete(self) -> None:
+        """Remove checkpoint file."""
+        try:
+            self._path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+# --- Coordinator ---
 
 
 class WalletCoordinator(DataUpdateCoordinator[WalletData]):
@@ -75,6 +142,9 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
         self._historical_balances: dict[str, float] = {}
         self._history_month: str = ""
         self._history_loaded: bool = False
+        self._checkpoint = BalanceCheckpoint(
+            Path(hass.config.path(".storage"))
+        )
 
     async def _aggregate_history_streaming(
         self,
@@ -82,7 +152,11 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
         earliest: datetime,
         month_start: datetime,
     ) -> None:
-        """Fetch historical records and aggregate sums per-window (low memory)."""
+        """Fetch historical records and aggregate sums per-window (low memory).
+
+        Processes records window by window so peak memory is O(records_per_window)
+        instead of O(total_records). Each window's list is freed after aggregation.
+        """
         self._historical_balances = {
             acc.get("id", ""): 0.0 for acc in accounts if acc.get("id")
         }
@@ -109,7 +183,6 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                 if acc_id in self._historical_balances:
                     self._historical_balances[acc_id] += _get_record_value(record)
             total_records += len(records)
-            # records list freed at end of each iteration
             window_start = window_end
 
         _LOGGER.info(
@@ -118,15 +191,88 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
             len(self._historical_balances),
         )
 
+    def _find_earliest_record_date(
+        self, accounts: list[dict[str, Any]], fallback: datetime
+    ) -> datetime:
+        """Find the earliest record date across all accounts."""
+        earliest = None
+        for acc in accounts:
+            stats = acc.get("recordStats")
+            if stats and stats.get("recordDate"):
+                min_date = stats["recordDate"].get("min")
+                if min_date:
+                    try:
+                        dt = datetime.fromisoformat(
+                            min_date.replace("Z", "+00:00")
+                        )
+                        if earliest is None or dt < earliest:
+                            earliest = dt
+                    except (ValueError, TypeError):
+                        pass
+        return earliest if earliest is not None else fallback
+
+    async def _ensure_historical_balances(
+        self,
+        accounts: list[dict[str, Any]],
+        month_start: datetime,
+        current_month_key: str,
+    ) -> None:
+        """Load or fetch historical balances, using checkpoint when possible."""
+        current_acc_ids = {acc.get("id") for acc in accounts if acc.get("id")}
+        cached_acc_ids = set(self._historical_balances.keys())
+
+        # Prune removed accounts
+        for removed_id in cached_acc_ids - current_acc_ids:
+            self._historical_balances.pop(removed_id, None)
+
+        new_accounts = current_acc_ids - cached_acc_ids
+
+        # Try loading from checkpoint on first startup
+        if not self._history_loaded:
+            saved_balances, saved_month = self._checkpoint.load()
+            if saved_month == current_month_key and saved_balances:
+                saved_acc_ids = set(saved_balances.keys())
+                if current_acc_ids.issubset(saved_acc_ids):
+                    self._historical_balances = saved_balances
+                    self._history_month = saved_month
+                    self._history_loaded = True
+                    _LOGGER.info(
+                        "Restored balance checkpoint: %d accounts, month=%s",
+                        len(saved_balances), saved_month,
+                    )
+                    return
+
+        # Full re-fetch needed: first load, month change, or new accounts
+        if (
+            not self._history_loaded
+            or self._history_month != current_month_key
+            or new_accounts
+        ):
+            earliest = self._find_earliest_record_date(
+                accounts, month_start - timedelta(days=365)
+            )
+            if earliest < month_start:
+                await self._aggregate_history_streaming(
+                    accounts, earliest, month_start
+                )
+
+            self._history_month = current_month_key
+            self._history_loaded = True
+
+            # Persist checkpoint for fast restart
+            self._checkpoint.save(
+                self._historical_balances, current_month_key
+            )
+
     async def _async_update_data(self) -> WalletData:
         """Fetch data from the Wallet API."""
         try:
             now = datetime.now(timezone.utc)
 
-            # Always fetch accounts
+            # --- Fetch accounts ---
             accounts = await self.client.async_get_accounts()
 
-            # Fetch categories (cache for 24h)
+            # --- Fetch categories (cache for 24h) ---
             if (
                 self._categories_last_fetched is None
                 or (now - self._categories_last_fetched) > timedelta(hours=24)
@@ -141,7 +287,7 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                 c["id"]: c for c in categories if c.get("id")
             }
 
-            # Current month boundaries
+            # --- Current month boundaries ---
             month_start = now.replace(
                 day=1, hour=0, minute=0, second=0, microsecond=0
             )
@@ -154,58 +300,18 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
 
             current_month_key = month_start.strftime("%Y-%m")
 
-            # Fetch current month records (always)
+            # --- Fetch current month records ---
             current_month_records = await self.client.async_get_records(
                 record_date_gte=month_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 record_date_lt=month_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
 
-            # Detect account changes
-            current_acc_ids = {acc.get("id") for acc in accounts if acc.get("id")}
-            cached_acc_ids = set(self._historical_balances.keys())
-            new_accounts = current_acc_ids - cached_acc_ids
-            removed_accounts = cached_acc_ids - current_acc_ids
+            # --- Ensure historical balances (checkpoint or API fetch) ---
+            await self._ensure_historical_balances(
+                accounts, month_start, current_month_key
+            )
 
-            # Prune removed accounts from cache
-            for removed_id in removed_accounts:
-                self._historical_balances.pop(removed_id, None)
-
-            # Fetch full history on first load, month change, or new accounts
-            if (
-                not self._history_loaded
-                or self._history_month != current_month_key
-                or new_accounts
-            ):
-                _LOGGER.info("Loading transaction history for balance computation")
-                # Find earliest record date across all accounts
-                earliest = None
-                for acc in accounts:
-                    stats = acc.get("recordStats")
-                    if stats and stats.get("recordDate"):
-                        min_date = stats["recordDate"].get("min")
-                        if min_date:
-                            try:
-                                dt = datetime.fromisoformat(
-                                    min_date.replace("Z", "+00:00")
-                                )
-                                if earliest is None or dt < earliest:
-                                    earliest = dt
-                            except (ValueError, TypeError):
-                                pass
-
-                if earliest is None:
-                    earliest = month_start - timedelta(days=365)
-
-                # Stream-aggregate: process per-window, never hold full history
-                if earliest < month_start:
-                    await self._aggregate_history_streaming(
-                        accounts, earliest, month_start
-                    )
-
-                self._history_month = current_month_key
-                self._history_loaded = True
-
-            # Pre-index current month records by account (O(n) instead of O(n*m))
+            # --- Pre-index current month records by account (O(1) lookup) ---
             records_by_account: dict[str, list[dict[str, Any]]] = {}
             current_sums: dict[str, float] = {}
             for record in current_month_records:
@@ -217,7 +323,7 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                     current_sums.get(acc_id, 0.0) + _get_record_value(record)
                 )
 
-            # Compute final balances: initialBalance*100 + historical + currentMonth
+            # --- Compute final balances ---
             account_balances: dict[str, float] = {}
             for acc in accounts:
                 acc_id = acc.get("id")
@@ -226,16 +332,16 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                 balance_data = acc.get("initialBalance")
                 if balance_data is None:
                     balance_data = acc.get("initialBaseBalance")
-                # API returns initialBalance divided by 100
-                initial = (_safe_float(balance_data.get("value", 0)) * 100) if balance_data else 0.0
+                initial = (
+                    _safe_float(balance_data.get("value", 0)) * 100
+                ) if balance_data else 0.0
                 historical = self._historical_balances.get(acc_id, 0.0)
                 current = current_sums.get(acc_id, 0.0)
-
                 account_balances[acc_id] = round(
                     initial + historical + current, 2
                 )
 
-            # Fetch budgets and standing orders
+            # --- Fetch budgets and standing orders ---
             budgets = await self.client.async_get_budgets()
             standing_orders = await self.client.async_get_standing_orders()
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import heapq
 import html
 import logging
 from typing import Any
@@ -271,11 +272,11 @@ class WalletAccountBalanceSensor(CoordinatorEntity[WalletCoordinator], SensorEnt
             account_records = self.coordinator.data.records_by_account.get(
                 self._account_id, []
             )
-            sorted_records = sorted(
+            sorted_records = heapq.nlargest(
+                self._transactions_count,
                 account_records,
                 key=lambda r: r.get("recordDate", ""),
-                reverse=True,
-            )[: self._transactions_count]
+            )
 
             attrs["transactions"] = [_format_transaction(r) for r in sorted_records]
             attrs["transactions_this_month"] = len(account_records)
@@ -383,11 +384,11 @@ class WalletRecentTransactionsSensor(CoordinatorEntity[WalletCoordinator], Senso
         if not self.coordinator.data:
             return {}
 
-        sorted_records = sorted(
+        sorted_records = heapq.nlargest(
+            10,
             self.coordinator.data.records_current_month,
             key=lambda r: r.get("recordDate", ""),
-            reverse=True,
-        )[:10]
+        )
 
         return {"transactions": [_format_transaction(r) for r in sorted_records]}
 

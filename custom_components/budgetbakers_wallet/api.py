@@ -77,9 +77,9 @@ class WalletApiClient:
 
                 if resp.status == 200:
                     try:
-                        return await resp.json(content_type=None)
+                        return await resp.json()
                     except (ValueError, aiohttp.ContentTypeError) as err:
-                        raise WalletApiError(f"Invalid JSON response") from err
+                        raise WalletApiError("Invalid JSON response") from err
                 if resp.status == 401:
                     raise WalletAuthError(
                         f"Authentication failed (HTTP {resp.status})"
@@ -192,7 +192,7 @@ class WalletApiClient:
 
                 if resp.status == 200:
                     try:
-                        data = await resp.json(content_type=None)
+                        data = await resp.json()
                     except (ValueError, aiohttp.ContentTypeError) as err:
                         raise WalletApiError("Invalid JSON response") from err
                     records = data.get("records", [])
