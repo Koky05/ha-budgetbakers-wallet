@@ -167,12 +167,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._selected_accounts
         )
 
+        # Build name→id mapping for investment accounts
+        name_to_id = {
+            acc.get("name", acc["id"]): acc["id"]
+            for acc in investment_accounts
+        }
+
         if user_input is not None:
             # Collect and validate per-account entity mappings
             investment_entities: dict[str, str] = {}
-            for acc in investment_accounts:
-                acc_id = acc["id"]
-                entity = user_input.get(f"investment_{acc_id}", "")
+            for acc_name, acc_id in name_to_id.items():
+                entity = user_input.get(acc_name, "")
                 if entity:
                     state = self.hass.states.get(entity)
                     if state and state.state not in ("unknown", "unavailable"):
@@ -191,21 +196,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._investment_entities = investment_entities
             return await self.async_step_settings()
 
-        # Build schema with one EntitySelector per Investment account
+        # Build schema — use account name as field label
         schema_fields: dict[Any, Any] = {}
-        for acc in investment_accounts:
+        for acc_name in name_to_id:
             schema_fields[
-                vol.Optional(f"investment_{acc['id']}", default="")
+                vol.Optional(acc_name, default="")
             ] = EntitySelector(EntitySelectorConfig(domain="sensor"))
 
         return self.async_show_form(
             step_id="investments",
             data_schema=vol.Schema(schema_fields),
-            description_placeholders={
-                "accounts": ", ".join(
-                    a.get("name", "Unknown") for a in investment_accounts
-                )
-            },
         )
 
     # --- Step 4: Settings ---
@@ -452,28 +452,31 @@ class WalletOptionsFlowHandler(config_entries.OptionsFlow):
             and a.get("accountType") == "Investment"
         ]
 
+        # Build name→id mapping
+        name_to_id = {
+            acc.get("name", acc["id"]): acc["id"]
+            for acc in investment_accounts
+        }
+
         if user_input is not None:
             investment_entities: dict[str, str] = {}
-            for acc in investment_accounts:
-                acc_id = acc["id"]
-                entity = user_input.get(f"investment_{acc_id}", "")
+            for acc_name, acc_id in name_to_id.items():
+                entity = user_input.get(acc_name, "")
                 if entity:
                     investment_entities[acc_id] = entity
 
             return self._create_options_entry(investment_entities)
 
-        # Build schema with one EntitySelector per Investment account
+        # Build schema — use account name as field label
         current_entities = self.config_entry.options.get(
             CONF_INVESTMENT_ENTITIES, {}
         )
 
         schema_fields: dict[Any, Any] = {}
-        for acc in investment_accounts:
-            acc_id = acc["id"]
-            acc_name = acc.get("name", "Unknown")
+        for acc_name, acc_id in name_to_id.items():
             current = current_entities.get(acc_id, "")
             schema_fields[
-                vol.Optional(f"investment_{acc_id}", default=current)
+                vol.Optional(acc_name, default=current)
             ] = EntitySelector(EntitySelectorConfig(domain="sensor"))
 
         return self.async_show_form(
