@@ -51,7 +51,7 @@
     "step": {
       "init": {
         "title": "Nastaven\u00ed Wallet",
-        "description": "Nastavte interval aktualizace a po\u010det transakc\u00ed.",
+        "description": "Nastavte interval aktualizace a po\u010det transakc\u00ed.\nNov\u00e9 \u00fa\u010dty budou dostupn\u00e9 k v\u00fdb\u011bru na dal\u0161\u00ed str\u00e1nce.",
         "data": {
           "update_interval": "Interval aktualizace (minuty)",
           "transactions_count": "Po\u010det posledn\u00edch transakc\u00ed na \u00fa\u010det (0-100)"

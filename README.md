@@ -52,6 +52,10 @@ Custom Home Assistant integration for [BudgetBakers Wallet](https://budgetbakers
 | Monitored accounts | All | Which accounts to create sensors for |
 | Investment entity | — | HA sensor entity for investment account balance (e.g., Avanza Stock) |
 
+### Adding New Accounts
+
+When you add a new bank account in the Wallet app, go to **Configure** in the integration options. The account list will be refreshed automatically on the accounts selection page.
+
 ## Sensors
 
 ### Per Account (as separate devices)
