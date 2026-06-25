@@ -12,6 +12,7 @@ from .const import API_BASE_URL, API_MAX_LIMIT, API_MAX_PAGES
 _LOGGER = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+API_MAX_BUDGET_LIMIT = 20
 
 
 class WalletAuthError(Exception):
@@ -69,11 +70,18 @@ class WalletApiClient:
         """Make a single API request."""
         url = f"{self._base_url}{path}"
         try:
+            _LOGGER.debug("Wallet API request: %s params=%s", path, params)
             async with self._session.get(
                 url, headers=self._headers(), params=params,
                 timeout=REQUEST_TIMEOUT,
             ) as resp:
                 self._track_rate_limit(resp)
+                _LOGGER.debug(
+                    "Wallet API response: %s status=%s remaining=%s",
+                    path,
+                    resp.status,
+                    self._rate_limit_remaining,
+                )
 
                 if resp.status == 200:
                     try:
@@ -98,7 +106,10 @@ class WalletApiClient:
                     raise WalletRateLimitError(
                         f"Rate limit exceeded, retry after {retry_after}s"
                     )
-                raise WalletApiError(f"API error (HTTP {resp.status})")
+                body = await resp.text()
+                raise WalletApiError(
+                    f"API error (HTTP {resp.status}) for {path}: {body[:500]}"
+                )
         except aiohttp.ClientError as err:
             raise WalletApiError(f"Connection error: {err}") from err
 
@@ -107,11 +118,12 @@ class WalletApiClient:
         path: str,
         result_key: str,
         params: dict[str, Any] | None = None,
+        limit: int = API_MAX_LIMIT,
     ) -> list[dict[str, Any]]:
         """Fetch all pages of a paginated endpoint."""
         all_items: list[dict[str, Any]] = []
         request_params = dict(params) if params else {}
-        request_params["limit"] = API_MAX_LIMIT
+        request_params["limit"] = limit
         request_params.setdefault("offset", 0)
 
         page_count = 0
@@ -189,6 +201,13 @@ class WalletApiClient:
                 timeout=REQUEST_TIMEOUT,
             ) as resp:
                 self._track_rate_limit(resp)
+                _LOGGER.debug(
+                    "Wallet API response: %s status=%s remaining=%s params=%s",
+                    url,
+                    resp.status,
+                    self._rate_limit_remaining,
+                    [*request_params.items(), *date_filters],
+                )
 
                 if resp.status == 200:
                     try:
@@ -205,7 +224,10 @@ class WalletApiClient:
                 elif resp.status == 409:
                     raise WalletSyncError("Sync in progress")
                 else:
-                    raise WalletApiError(f"API error (HTTP {resp.status})")
+                    body = await resp.text()
+                    raise WalletApiError(
+                        f"API error (HTTP {resp.status}) for {url}: {body[:500]}"
+                    )
 
             if resp.status != 200 or next_offset is None:
                 break
@@ -222,7 +244,7 @@ class WalletApiClient:
     async def async_get_budgets(self) -> list[dict[str, Any]]:
         """Get all budgets."""
         return await self._paginated_request(
-            "/v1/api/budgets", "budgets"
+            "/v1/api/budgets", "budgets", limit=API_MAX_BUDGET_LIMIT
         )
 
     async def async_get_standing_orders(self) -> list[dict[str, Any]]:

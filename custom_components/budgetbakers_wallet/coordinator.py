@@ -73,15 +73,18 @@ class WalletData:
 class BalanceCheckpoint:
     """Persistent storage for historical balance sums."""
 
-    def __init__(self, storage_path: Path) -> None:
-        self._path = storage_path / CHECKPOINT_FILENAME
+    def __init__(self, storage_path: Path, entry_id: str) -> None:
+        filename = f"{Path(CHECKPOINT_FILENAME).stem}_{entry_id}.json"
+        self._path = storage_path / filename
+        self._legacy_path = storage_path / CHECKPOINT_FILENAME
 
     def load(self) -> tuple[dict[str, float], str]:
         """Load checkpoint from disk. Returns (balances, month_key)."""
-        if not self._path.exists():
+        path = self._path if self._path.exists() else self._legacy_path
+        if not path.exists():
             return {}, ""
         try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
             balances = {
                 k: _safe_float(v)
                 for k, v in data.get("balances", {}).items()
@@ -131,7 +134,9 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
         self,
         hass: HomeAssistant,
         client: WalletApiClient,
+        entry_id: str,
         update_interval_minutes: int,
+        monitored_account_ids: list[str] | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -145,9 +150,65 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
         self._historical_balances: dict[str, float] = {}
         self._history_month: str = ""
         self._history_loaded: bool = False
+        self._monitored_account_ids = set(monitored_account_ids or [])
+        self._all_account_ids: set[str] = set()
         self._checkpoint = BalanceCheckpoint(
-            Path(hass.config.path(".storage"))
+            Path(hass.config.path(".storage")), entry_id
         )
+
+    def _filter_monitored_accounts(
+        self, accounts: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Return accounts selected for this config entry."""
+        if not self._monitored_account_ids:
+            return accounts
+        return [
+            account
+            for account in accounts
+            if account.get("id") in self._monitored_account_ids
+        ]
+
+    def _account_ids_for_record_fetch(
+        self, accounts: list[dict[str, Any]]
+    ) -> set[str] | None:
+        """Return account IDs to fetch individually, or None to fetch all at once."""
+        if not self._monitored_account_ids:
+            return None
+
+        all_account_ids = self._all_account_ids or {
+            account.get("id") for account in accounts if account.get("id")
+        }
+        selected_ids = self._monitored_account_ids & all_account_ids
+
+        if not selected_ids or selected_ids == all_account_ids:
+            return None
+        return selected_ids
+
+    async def _fetch_records(
+        self,
+        accounts: list[dict[str, Any]],
+        record_date_gte: str,
+        record_date_lt: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch records, using account filters when only some accounts are selected."""
+        account_ids = self._account_ids_for_record_fetch(accounts)
+        if account_ids is None:
+            return await self.client.async_get_records(
+                record_date_gte=record_date_gte,
+                record_date_lt=record_date_lt,
+            )
+
+        records: list[dict[str, Any]] = []
+        for account_id in sorted(account_ids):
+            records.extend(
+                await self.client.async_get_records(
+                    record_date_gte=record_date_gte,
+                    record_date_lt=record_date_lt,
+                    account_id=account_id,
+                )
+            )
+        records.sort(key=lambda record: record.get("recordDate", ""), reverse=True)
+        return records
 
     async def _aggregate_history_streaming(
         self,
@@ -177,7 +238,8 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
                 window_start.isoformat(),
                 window_end.isoformat(),
             )
-            records = await self.client.async_get_records(
+            records = await self._fetch_records(
+                accounts=accounts,
                 record_date_gte=window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 record_date_lt=window_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
@@ -273,7 +335,13 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
             now = datetime.now(timezone.utc)
 
             # --- Fetch accounts ---
-            accounts = await self.client.async_get_accounts()
+            all_accounts = await self.client.async_get_accounts()
+            self._all_account_ids = {
+                account.get("id")
+                for account in all_accounts
+                if account.get("id")
+            }
+            accounts = self._filter_monitored_accounts(all_accounts)
 
             # --- Fetch categories (cache for 24h) ---
             if (
@@ -304,7 +372,8 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
             current_month_key = month_start.strftime("%Y-%m")
 
             # --- Fetch current month records ---
-            current_month_records = await self.client.async_get_records(
+            current_month_records = await self._fetch_records(
+                accounts=accounts,
                 record_date_gte=month_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 record_date_lt=month_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
@@ -385,7 +454,7 @@ class WalletCoordinator(DataUpdateCoordinator[WalletData]):
             _LOGGER.warning("API rate limit exceeded: %s", err)
             raise UpdateFailed("API rate limit exceeded") from None
         except WalletApiError as err:
-            _LOGGER.debug("API error detail: %s", err)
+            _LOGGER.warning("API error detail: %s", err)
             raise UpdateFailed(
-                "Error communicating with Wallet API"
+                f"Error communicating with Wallet API: {err}"
             ) from None
