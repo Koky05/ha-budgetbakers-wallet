@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -43,6 +44,17 @@ TOKEN_SCHEMA = vol.Schema(
         vol.Required(CONF_API_TOKEN): vol.All(str, vol.Length(min=10)),
     }
 )
+
+
+def _token_unique_id(token: str) -> str:
+    """Return a stable non-secret identifier for this API token."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _entry_matches_token(entry: config_entries.ConfigEntry, token: str) -> bool:
+    """Return true if an existing config entry uses the same API token."""
+    existing_token = entry.data.get(CONF_API_TOKEN)
+    return isinstance(existing_token, str) and _token_unique_id(existing_token) == token
 
 
 def _build_investment_label(acc: dict[str, Any], index: int) -> str:
@@ -236,7 +248,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> config_entries.ConfigFlowResult:
         """Step 4: Configure update interval and transaction count."""
         if user_input is not None:
-            await self.async_set_unique_id("budgetbakers_wallet")
+            token_unique_id = _token_unique_id(self._token)
+            for entry in self._async_current_entries():
+                if _entry_matches_token(entry, token_unique_id):
+                    return self.async_abort(reason="already_configured")
+
+            await self.async_set_unique_id(token_unique_id)
             self._abort_if_unique_id_configured()
 
             return self.async_create_entry(
