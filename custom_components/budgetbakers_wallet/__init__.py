@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -12,6 +13,7 @@ from .api import WalletApiClient
 from .const import (
     CONF_API_TOKEN,
     CONF_INVESTMENT_ENTITIES,
+    CONF_MONITORED_ACCOUNTS,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
     PLATFORMS,
@@ -21,6 +23,11 @@ from .coordinator import WalletCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 WalletConfigEntry = ConfigEntry[WalletCoordinator]
+
+
+def _token_unique_id(token: str) -> str:
+    """Return a stable non-secret identifier for this API token."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: WalletConfigEntry) -> bool:
@@ -34,7 +41,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: WalletConfigEntry) -> bo
         hass.config_entries.async_update_entry(entry, options=new_options)
 
     token = entry.data[CONF_API_TOKEN]
+    if entry.unique_id == "budgetbakers_wallet":
+        hass.config_entries.async_update_entry(
+            entry, unique_id=_token_unique_id(token)
+        )
+
     update_interval = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+    monitored_accounts = entry.options.get(CONF_MONITORED_ACCOUNTS, [])
 
     session = async_get_clientsession(hass)
     client = WalletApiClient(session, token)
@@ -42,7 +55,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: WalletConfigEntry) -> bo
     coordinator = WalletCoordinator(
         hass=hass,
         client=client,
+        entry_id=entry.entry_id,
         update_interval_minutes=update_interval,
+        monitored_account_ids=monitored_accounts,
     )
 
     await coordinator.async_config_entry_first_refresh()
